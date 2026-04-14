@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \"import json; f=open\\('/Users/nickm/github/random/tableau_bulk_add_users/add_users_to_group.ipynb'\\); nb=json.load\\(f\\); print\\('nbformat:', nb.get\\('nbformat'\\)\\); print\\('nbformat_minor:', nb.get\\('nbformat_minor'\\)\\); [print\\(f'cell {i}: type={c[\\\\\"cell_type\\\\\"]}, exec_count={c.get\\(\\\\\"execution_count\\\\\", \\\\\"N/A\\\\\"\\)}'\\) for i,c in enumerate\\(nb['cells']\\)]\")",
+      "Bash(python3 -c ':*)"
+    ]
+  }
+}
