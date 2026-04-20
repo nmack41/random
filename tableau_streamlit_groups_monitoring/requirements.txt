@@ -1,0 +1,4 @@
+tableauserverclient
+streamlit
+pandas
+python-dotenv

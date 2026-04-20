@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(office-hours)",
+      "Skill(office-hours:*)",
+      "Bash(python -c \"import ast; [ast.parse\\(open\\(f\\).read\\(\\)\\) for f in ['config.py', 'db.py', 'diff.py', 'snapshot.py', 'app.py', 'pages/current_state.py', 'pages/changes.py']]; print\\('All files parse OK'\\)\")",
+      "Bash(python3 -c \"import ast; [ast.parse\\(open\\(f\\).read\\(\\)\\) for f in ['config.py', 'db.py', 'diff.py', 'snapshot.py', 'app.py', 'pages/current_state.py', 'pages/changes.py']]; print\\('All files parse OK'\\)\")",
+      "Bash(python -c \"import py_compile; [py_compile.compile\\(f, doraise=True\\) for f in ['config.py', 'db.py', 'diff.py', 'pages/changes.py', 'pages/current_state.py', 'app.py']]\")",
+      "Bash(python3 -c \"import py_compile; [py_compile.compile\\(f, doraise=True\\) for f in ['config.py', 'db.py', 'diff.py', 'pages/changes.py', 'pages/current_state.py', 'app.py']]\")",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
+    ],
+    "additionalDirectories": [
+      "/Users/nickm/.claude/projects/-Users-nickm-github-random-tableau-streamlit-groups-monitoring"
+    ]
+  }
+}
