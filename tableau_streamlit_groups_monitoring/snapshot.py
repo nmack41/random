@@ -5,6 +5,7 @@ Usage:  python snapshot.py
 """
 
 import sys
+import traceback
 
 import tableauserverclient as TSC
 
@@ -18,27 +19,20 @@ PAGE_SIZE = 100
 def fetch_all_group_members(server: TSC.Server) -> list[dict]:
     """Fetch every group and its full member list from Tableau Server."""
     members = []
-    all_groups = list(TSC.Pager(server.groups))
+    all_groups = list(TSC.Pager(server.groups.get))
     print(f"Found {len(all_groups)} groups")
 
-    req = TSC.RequestOptions(pagesize=PAGE_SIZE)
     for group in all_groups:
-        page_number = 1
-        while True:
-            req.pagenumber = page_number
-            server.groups.populate_users(group, req)
-            for user in group.users:
-                members.append({
-                    "group_name": group.name,
-                    "group_id": group.id,
-                    "user_name": user.name,
-                    "user_id": user.id,
-                    "site_role": user.site_role,
-                    "domain_name": getattr(user, "domain_name", ""),
-                })
-            if len(group.users) < PAGE_SIZE:
-                break
-            page_number += 1
+        server.groups.populate_users(group)
+        for user in group.users:
+            members.append({
+                "group_name": group.name,
+                "group_id": group.id,
+                "user_name": user.name,
+                "user_id": user.id,
+                "site_role": user.site_role,
+                "domain_name": getattr(user, "domain_name", ""),
+            })
 
     return members
 
@@ -74,6 +68,12 @@ def take_snapshot():
 
     except Exception as e:
         print(f"Snapshot failed: {e}", file=sys.stderr)
+        try:
+            from importlib.metadata import version
+            print(f"tableauserverclient version: {version('tableauserverclient')}", file=sys.stderr)
+        except Exception:
+            pass
+        traceback.print_exc(file=sys.stderr)
         db.complete_snapshot(conn, snapshot_id, db.STATUS_FAILED)
         conn.commit()
         conn.close()
