@@ -37,8 +37,8 @@ col3.metric("Memberships", len(df))
 search = st.text_input("Search groups or users")
 if search:
     mask = (
-        df["Group Name"].str.contains(search, case=False, na=False)
-        | df["User Name"].str.contains(search, case=False, na=False)
+        df["Group Name"].str.contains(search, case=False, na=False, regex=False)
+        | df["User Name"].str.contains(search, case=False, na=False, regex=False)
     )
     df = df[mask]
 

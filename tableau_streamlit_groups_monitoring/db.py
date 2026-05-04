@@ -45,6 +45,30 @@ CREATE TABLE IF NOT EXISTS membership_changes (
 
 CREATE INDEX IF NOT EXISTS idx_mc_current ON membership_changes(current_snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_mc_group ON membership_changes(group_name);
+
+CREATE TABLE IF NOT EXISTS workbooks (
+    id INTEGER PRIMARY KEY,
+    snapshot_id INTEGER NOT NULL REFERENCES snapshots(id),
+    workbook_id TEXT NOT NULL,
+    workbook_name TEXT NOT NULL,
+    project_name TEXT,
+    UNIQUE (snapshot_id, workbook_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_workbooks_snapshot
+    ON workbooks(snapshot_id);
+
+CREATE TABLE IF NOT EXISTS workbook_group_access (
+    id INTEGER PRIMARY KEY,
+    snapshot_id INTEGER NOT NULL REFERENCES snapshots(id),
+    workbook_id TEXT NOT NULL,
+    group_id TEXT NOT NULL,
+    group_name TEXT,
+    UNIQUE (snapshot_id, workbook_id, group_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wga_snapshot
+    ON workbook_group_access(snapshot_id);
 """
 
 
@@ -113,6 +137,38 @@ def get_snapshot_list(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 def get_members_for_snapshot(conn: sqlite3.Connection, snapshot_id: int) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT group_name, user_name, site_role, domain_name FROM group_members WHERE snapshot_id = ? ORDER BY group_name, user_name",
+        (snapshot_id,),
+    ).fetchall()
+
+
+def insert_workbooks(conn: sqlite3.Connection, snapshot_id: int, workbooks: list[dict]):
+    conn.executemany(
+        """INSERT INTO workbooks
+           (snapshot_id, workbook_id, workbook_name, project_name)
+           VALUES (:snapshot_id, :workbook_id, :workbook_name, :project_name)""",
+        [{"snapshot_id": snapshot_id, **w} for w in workbooks],
+    )
+
+
+def insert_workbook_group_access(conn: sqlite3.Connection, snapshot_id: int, grants: list[dict]):
+    conn.executemany(
+        """INSERT INTO workbook_group_access
+           (snapshot_id, workbook_id, group_id, group_name)
+           VALUES (:snapshot_id, :workbook_id, :group_id, :group_name)""",
+        [{"snapshot_id": snapshot_id, **g} for g in grants],
+    )
+
+
+def get_workbooks_for_snapshot(conn: sqlite3.Connection, snapshot_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        """SELECT w.workbook_id, w.workbook_name, w.project_name,
+                  a.group_id, a.group_name
+           FROM workbooks w
+           LEFT JOIN workbook_group_access a
+             ON a.snapshot_id = w.snapshot_id
+            AND a.workbook_id = w.workbook_id
+           WHERE w.snapshot_id = ?
+           ORDER BY w.project_name, w.workbook_name, a.group_name""",
         (snapshot_id,),
     ).fetchall()
 

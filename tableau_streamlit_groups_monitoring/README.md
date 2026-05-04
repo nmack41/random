@@ -1,6 +1,6 @@
 # Tableau Groups Monitoring Dashboard
 
-A Streamlit app that snapshots Tableau Server group memberships, detects changes over time, and lets you answer compliance questions like "who's in group X?" with a CSV export in under 30 seconds.
+A Streamlit app that snapshots Tableau Server group memberships and workbook permissions, detects membership changes over time, and lets you answer compliance questions like "who's in group X?" or "which groups can access this workbook?" with a CSV export in under 30 seconds.
 
 ## Why this exists
 
@@ -10,7 +10,7 @@ When leadership or compliance asks "who has access to what on Tableau Server?", 
 
 There are two separate pieces that run independently:
 
-1. **`snapshot.py`** — A CLI script you run manually. It connects to Tableau Server via the REST API, pulls every group and its members, and stores them in a local SQLite database. It also computes a diff against the previous snapshot so you can see what changed.
+1. **`snapshot.py`** — A CLI script you run manually. It connects to Tableau Server via the REST API, pulls every group and its members, every workbook and its group-level permissions, and stores them in a local SQLite database. It also computes a diff of group memberships against the previous snapshot so you can see what changed.
 
 2. **`app.py`** — A Streamlit web app that reads from that same SQLite database and gives you a searchable, filterable, exportable view of the data. It never talks to Tableau Server directly.
 
@@ -76,7 +76,9 @@ You should see output like:
 
 ```
 Found 12 groups
+Found 38 workbooks
 Captured 247 total memberships
+Captured 38 workbooks, 71 workbook-group grants
 First snapshot — no previous data to diff against
 Snapshot #1 complete
 ```
@@ -101,6 +103,8 @@ Run `python3 snapshot.py` whenever you want to capture the current state. Each s
 
 **Current State page** — Shows who's in which group right now (or at any past snapshot). Use the search bar to filter by group name or user name. Click "Export CSV" to download.
 
+**Workbooks page** — Shows which groups have access to each workbook at the selected snapshot. One row per workbook; the "Groups with access" column lists every group with `Read=Allow` on that workbook (comma-separated; `—` for workbooks with no group access). Use the search bar to filter by project, workbook name, or group name. Use the toolbar's built-in download button on the dataframe to export CSV. **Note:** project-level locks and direct user grants are not represented — see "Known limitations" below.
+
 **Changes page** — Shows membership additions and removals between any two snapshots. Green rows = users added to groups, red rows = users removed. Exportable to CSV.
 
 ## Project structure
@@ -113,7 +117,8 @@ Run `python3 snapshot.py` whenever you want to capture the current state. Each s
 ├── config.py               # Reads credentials from .env
 ├── pages/
 │   ├── current_state.py    # Page 1: browse group memberships
-│   └── changes.py          # Page 2: view membership changes over time
+│   ├── workbooks.py        # Page 2: browse which groups can access each workbook
+│   └── changes.py          # Page 3: view membership changes over time
 ├── data/
 │   └── groups.db           # SQLite database (auto-created, gitignored)
 ├── requirements.txt
@@ -128,7 +133,7 @@ Run `python3 snapshot.py` whenever you want to capture the current state. Each s
 
 1. **`config.py`** loads credentials from `.env` into Python variables.
 2. **`db.py`** defines the SQLite schema (3 tables) and auto-creates the database on first import. Every other module imports `db` to read/write data.
-3. **`snapshot.py`** authenticates to Tableau Server, iterates all groups with `TSC.Pager()` (handles pagination), iterates all users within each group, and bulk-inserts everything into `group_members`. If the API call fails, the snapshot is marked "failed" and no partial data is saved.
+3. **`snapshot.py`** authenticates to Tableau Server, iterates all groups with `TSC.Pager()` (handles pagination), iterates all users within each group, and bulk-inserts everything into `group_members`. It then iterates all workbooks, calls `populate_permissions` per workbook, folds the rules into a deduplicated set of group IDs with `Read=Allow`, and bulk-inserts results into `workbooks` and `workbook_group_access`. If any API call fails, the snapshot is marked "failed" and no partial data is exposed (the workbook capture happens before the snapshot is committed as `success`).
 4. **`diff.py`** compares two snapshots using SQL `EXCEPT` queries to find who was added or removed. It writes results to `membership_changes`. It's called automatically by `snapshot.py` but can also be run standalone: `python3 diff.py 1 2`.
 5. **`app.py`** sets up the Streamlit multi-page app. Each page in `pages/` reads from SQLite independently.
 
@@ -139,6 +144,10 @@ Run `python3 snapshot.py` whenever you want to capture the current state. Each s
 | `snapshots` | One row per snapshot run, with a timestamp and success/failure status |
 | `group_members` | Every group-user pair at a given snapshot. This is the main data table. |
 | `membership_changes` | Computed diffs: who was added/removed between consecutive snapshots |
+| `workbooks` | One row per workbook seen in a snapshot (regardless of permissions) |
+| `workbook_group_access` | One row per `(workbook, group)` grant where the group has `Read=Allow` on the workbook |
+
+The Workbooks page does a `LEFT JOIN` from `workbooks` to `workbook_group_access`, so workbooks with zero group grants appear naturally with no rows on the right side of the join.
 
 ### Key design decisions
 
@@ -146,6 +155,15 @@ Run `python3 snapshot.py` whenever you want to capture the current state. Each s
 - **Snapshots are immutable** — Once written, snapshot data is never modified. This makes diffs reliable and gives you a full audit trail.
 - **The Streamlit app never writes data** — It only reads from SQLite. All writes happen in `snapshot.py`. This separation means the dashboard can't accidentally corrupt your data.
 - **WAL mode** — The database uses Write-Ahead Logging so `snapshot.py` can write while Streamlit reads without locking conflicts.
+
+## Known limitations of workbook permissions
+
+These are deliberate v1 cuts, not bugs:
+
+- **Project-locked workbooks.** If a Tableau project is "Locked to the Project," workbook-level rules returned by the API may be displayed but ineffective at the server. The Workbooks page reports rule presence, not effective access.
+- **The "All Users" group.** A single `Read=Allow` rule for "All Users" makes a workbook effectively public. v1 stores it as just another group; the UI does not call it out specially.
+- **Direct user grants are skipped.** A workbook that's only granted to individual users (no groups) will appear as "no group access" on the Workbooks page.
+- **Views, "differs from parent," drift detection, and the inverse "group → workbooks" view** are explicitly deferred to v2. See `docs/superpowers/specs/2026-05-01-workbook-view-permissions-design.md` for the rollout plan.
 
 ## Troubleshooting
 

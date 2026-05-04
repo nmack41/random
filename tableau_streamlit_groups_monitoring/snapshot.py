@@ -16,13 +16,20 @@ from diff import compute_diff
 PAGE_SIZE = 100
 
 
-def fetch_all_group_members(server: TSC.Server) -> list[dict]:
-    """Fetch every group and its full member list from Tableau Server."""
+def fetch_all_group_members(server: TSC.Server) -> tuple[list[dict], dict[str, str]]:
+    """Fetch every group and its full member list from Tableau Server.
+
+    Returns (members, group_id_to_name). The name map is reused by the
+    workbook-permissions fold, since PermissionsRule grantees carry an ID
+    but not a name.
+    """
     members = []
+    group_id_to_name: dict[str, str] = {}
     all_groups = list(TSC.Pager(server.groups.get))
     print(f"Found {len(all_groups)} groups")
 
     for group in all_groups:
+        group_id_to_name[group.id] = group.name
         server.groups.populate_users(group)
         for user in group.users:
             members.append({
@@ -34,13 +41,68 @@ def fetch_all_group_members(server: TSC.Server) -> list[dict]:
                 "domain_name": getattr(user, "domain_name", ""),
             })
 
-    return members
+    return members, group_id_to_name
+
+
+def groups_with_access(rules, group_id_to_name: dict[str, str]) -> set[tuple[str, str | None]]:
+    """Return {(group_id, group_name), ...} for groups with Read=Allow on a workbook.
+
+    A group "has access" if it has any rule with Read=Allow. Rules with
+    Read missing or Read=Deny do not qualify, regardless of other capabilities,
+    because Read is foundational on Tableau (no other capability is usable
+    without it).
+
+    Returns a set so multiple inheritance-merged rules resolving to the same
+    group dedupe naturally. Direct user grants are skipped per non-goal.
+    Names default to None when the group_id is not in the map (stale reference).
+    """
+    out: set[tuple[str, str | None]] = set()
+    for rule in rules:
+        if rule.grantee.tag_name != "group":
+            continue
+        if rule.capabilities.get("Read") != "Allow":
+            continue
+        gid = rule.grantee.id
+        out.add((gid, group_id_to_name.get(gid)))
+    return out
+
+
+def fetch_all_workbook_permissions(
+    server: TSC.Server,
+    group_id_to_name: dict[str, str],
+) -> tuple[list[dict], list[dict]]:
+    """Fetch every workbook and its group-level permissions.
+
+    Returns (workbooks, grants) where workbooks is one row per workbook and
+    grants is one row per (workbook, group_with_access) pair.
+    """
+    workbooks: list[dict] = []
+    grants: list[dict] = []
+    all_wbs = list(TSC.Pager(server.workbooks.get))
+    print(f"Found {len(all_wbs)} workbooks")
+
+    for wb in all_wbs:
+        workbooks.append({
+            "workbook_id": wb.id,
+            "workbook_name": wb.name,
+            "project_name": getattr(wb, "project_name", None),
+        })
+        server.workbooks.populate_permissions(wb)
+        for gid, gname in groups_with_access(wb.permissions, group_id_to_name):
+            grants.append({
+                "workbook_id": wb.id,
+                "group_id": gid,
+                "group_name": gname,
+            })
+
+    return workbooks, grants
 
 
 def take_snapshot():
     """Authenticate, snapshot all group memberships, and compute diff."""
     conn = db.get_connection()
     snapshot_id = db.create_snapshot(conn)
+    conn.commit()
 
     try:
         server = TSC.Server(config.TABLEAU_SERVER_URL, use_server_version=True)
@@ -51,22 +113,19 @@ def take_snapshot():
         )
 
         with server.auth.sign_in(auth):
-            members = fetch_all_group_members(server)
+            members, group_id_to_name = fetch_all_group_members(server)
+            workbooks, grants = fetch_all_workbook_permissions(server, group_id_to_name)
 
         print(f"Captured {len(members)} total memberships")
+        print(f"Captured {len(workbooks)} workbooks, {len(grants)} workbook-group grants")
         db.insert_members(conn, snapshot_id, members)
+        db.insert_workbooks(conn, snapshot_id, workbooks)
+        db.insert_workbook_group_access(conn, snapshot_id, grants)
         db.complete_snapshot(conn, snapshot_id, db.STATUS_SUCCESS)
         conn.commit()
-
-        previous_id = db.get_previous_snapshot_id(conn, snapshot_id)
-        if previous_id is not None:
-            summary = compute_diff(conn, previous_id, snapshot_id)
-            conn.commit()
-            print(f"Diff vs snapshot #{previous_id}: {summary['added']} added, {summary['removed']} removed")
-        else:
-            print("First snapshot — no previous data to diff against")
-
     except Exception as e:
+        # Discard partial capture rows so the FAILED snapshot has no data attached.
+        conn.rollback()
         print(f"Snapshot failed: {e}", file=sys.stderr)
         try:
             from importlib.metadata import version
@@ -78,6 +137,22 @@ def take_snapshot():
         conn.commit()
         conn.close()
         sys.exit(1)
+
+    # Diff is best-effort: a failure here must NOT downgrade the already-committed
+    # success snapshot. Spec: "If the membership diff fails after a successful
+    # workbook capture, the snapshot stays `success` ... drift computation is best-effort."
+    try:
+        previous_id = db.get_previous_snapshot_id(conn, snapshot_id)
+        if previous_id is not None:
+            summary = compute_diff(conn, previous_id, snapshot_id)
+            conn.commit()
+            print(f"Diff vs snapshot #{previous_id}: {summary['added']} added, {summary['removed']} removed")
+        else:
+            print("First snapshot — no previous data to diff against")
+    except Exception as e:
+        conn.rollback()
+        print(f"Diff failed for snapshot #{snapshot_id} (snapshot remains success): {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
 
     conn.close()
     print(f"Snapshot #{snapshot_id} complete")

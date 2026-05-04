@@ -4,6 +4,7 @@ st.set_page_config(page_title="Tableau Groups Monitor", page_icon=":busts_in_sil
 
 pages = [
     st.Page("pages/current_state.py", title="Current State", icon=":mag:"),
+    st.Page("pages/workbooks.py", title="Workbooks", icon=":bar_chart:"),
     st.Page("pages/changes.py", title="Changes", icon=":chart_with_upwards_trend:"),
 ]
 
