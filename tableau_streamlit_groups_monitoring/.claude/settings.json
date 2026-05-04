@@ -13,7 +13,9 @@
       "Bash(git -C /Users/nickm/github/random/tableau_streamlit_groups_monitoring log --oneline -20)",
       "mcp__pal__chat",
       "Skill(commit-commands:commit)",
-      "Skill(commit-commands:commit:*)"
+      "Skill(commit-commands:commit:*)",
+      "Bash(git -C /Users/nickm/github/random/tableau_streamlit_groups_monitoring add docs/superpowers/specs/2026-05-01-workbook-view-permissions-design.md)",
+      "Bash(git -C /Users/nickm/github/random/tableau_streamlit_groups_monitoring commit -m 'Add design spec for workbook & view permissions feature *)"
     ],
     "additionalDirectories": [
       "/Users/nickm/.claude/projects/-Users-nickm-github-random-tableau-streamlit-groups-monitoring"
