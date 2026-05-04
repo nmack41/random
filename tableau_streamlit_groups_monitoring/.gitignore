@@ -1,5 +1,6 @@
 .env
 data/*.db
+fake_data/*.db
 __pycache__/
 *.pyc
 .streamlit/secrets.toml
