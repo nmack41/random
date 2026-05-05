@@ -105,22 +105,18 @@ if needle:
     if not items:
         st.info(f"No workbooks match '{search.strip()}'.")
 
-def _highlight_differs(row):
-    if row["Differs from workbook"] == "Yes":
-        return ["background-color: #fff3cd"] * len(row)
-    return [""] * len(row)
-
-
 COLUMNS = ["View", "Groups with access", "Differs from workbook"]
 
 # Auto-expand on search: passing `expanded=bool(needle)` is read on every Streamlit rerun
 # (it's not a one-shot initial-state prop), so this stays reactive without session_state.
 for wb_id, wb in items:
-    label = f"{wb['project']} / {wb['name']}" if wb["project"] else wb["name"]
+    base_label = f"{wb['project']} / {wb['name']}" if wb["project"] else wb["name"]
     n_diff = sum(1 for v in wb["views"].values() if v["differs"])
     if n_diff > 0:
         noun = "view" if n_diff == 1 else "views"
-        label = f"{label} ({n_diff} {noun} differ)"
+        label = f":orange[**{base_label}**] ({n_diff} {noun} differ)"
+    else:
+        label = base_label
     with st.expander(label, expanded=bool(needle)):
         if not wb["views"]:
             records = [{"View": PLACEHOLDER, "Groups with access": PLACEHOLDER, "Differs from workbook": PLACEHOLDER}]
@@ -138,5 +134,4 @@ for wb_id, wb in items:
                 for v in ordered_views
             ]
         df = pd.DataFrame(records, columns=COLUMNS)
-        styled = df.style.apply(_highlight_differs, axis=1)
-        st.dataframe(styled, use_container_width=True, hide_index=True)
+        st.dataframe(df, use_container_width=True, hide_index=True)
