@@ -67,6 +67,28 @@ Notes:
 - `CREATE TABLE IF NOT EXISTS` makes the schema additions idempotent — existing DBs migrate on next `db.init_db()` call (which runs at import time).
 - No `source` / provenance column. The page does not need it, and the workbook page proved this resolution-flat-at-capture pattern works without one.
 
+### Schema versioning
+
+`CREATE TABLE IF NOT EXISTS` alone is sufficient for *adding* tables but gives no path for future *alterations* and no way to detect a partial / mismatched install. Add a single-row `schema_version` table now, while we're already touching the schema, so the next migration that needs an `ALTER TABLE` doesn't have to retrofit version detection.
+
+```sql
+CREATE TABLE IF NOT EXISTS schema_version (
+    version INTEGER PRIMARY KEY
+);
+```
+
+`db.init_db()` after running `SCHEMA` does:
+
+```python
+row = conn.execute("SELECT version FROM schema_version").fetchone()
+if row is None:
+    conn.execute("INSERT INTO schema_version (version) VALUES (?)", (CURRENT_SCHEMA_VERSION,))
+elif row[0] != CURRENT_SCHEMA_VERSION:
+    raise RuntimeError(f"DB schema v{row[0]}, code expects v{CURRENT_SCHEMA_VERSION}. Re-seed or migrate.")
+```
+
+`CURRENT_SCHEMA_VERSION = 2` (1 = pre-views, 2 = views added). Existing DBs with no row get tagged as v2 on first read — fine, since the additive `CREATE TABLE IF NOT EXISTS` actually makes them v2 on init. Out of scope: a real migration runner. The point right now is just to have a version handle to fail loud against next time.
+
 ## Snapshot capture flow
 
 `snapshot.py` is extended with one new function and one extra call inside `take_snapshot`'s try block.
@@ -149,9 +171,10 @@ db.insert_view_group_access(conn, snapshot_id, view_grants)
 
 1. Sign in (reuse the snapshot.py auth block).
 2. `views = list(TSC.Pager(server.views.get))` — record the count.
-3. Time `server.views.populate_permissions(view)` on 5 views; multiply by the count and add the existing workbook-fetch projection.
+3. Pick a **stratified sample** of views, not five random ones: 3 with no/few explicit rules, 3 "typical" views from busy projects, and 3 from the most heavily-permissioned workbook on the site (sort workbooks by their grant count to find it). Time `server.views.populate_permissions(view)` on each.
+4. Compute **median and p95** across the sample. Project total runtime as `count × p95` (not `count × mean`) — one outlier view per thousand wrecks the snapshot, and the mean hides that. Add the existing workbook-fetch projection.
 
-If the projected end-to-end snapshot exceeds ~10 minutes, **stop** and revisit the design (e.g., narrow scope to a single project, defer to nightly batch, or explore the GraphQL Metadata API) before writing any code. The verification checklist runs *after* implementation; this probe is the pre-commit kill switch. The N+1 against a server we don't control is the only part of this design that can blow up irreversibly post-merge.
+**Threshold.** Current snapshot cadence and runtime aren't documented in this repo, so the gate is expressed as a *budget multiplier* rather than a wall-clock minute count: **abort if the projected total runtime exceeds 2× the current end-to-end snapshot time** measured against the same site on the same day. (If today's snapshot is 90s, the new ceiling is ~3min; if today's is 6min, the ceiling is ~12min.) The 2× budget is what the existing schedule can absorb without colliding with the next run; anything beyond that needs a design revisit (narrow scope to a project, defer to nightly batch, or explore the GraphQL Metadata API) before writing code. The verification checklist runs *after* implementation; this probe is the pre-commit kill switch. The N+1 against a server we don't control is the only part of this design that can blow up irreversibly post-merge.
 
 ### Failure semantics
 
@@ -260,3 +283,4 @@ Manual checklist after implementation, run against the fake-data DB unless noted
 7. Stale group reference in a view fixture renders as `<unresolved:GID>`.
 8. Snapshot selector switches between seeded snapshots without errors.
 9. Smoke test on a real Tableau instance: `python3 snapshot.py` completes within the probe's projected runtime; Views page loads against the captured snapshot.
+10. **Workbooks-page regression check.** After re-seeding the fake DB on this branch, the Workbooks page query result for the latest seeded snapshot is byte-for-byte identical to the same query result captured from `main` before this change. Capture once (`git stash` the views work, run `python -m fake_data.seed && sqlite3 fake_data/groups.db "<get_workbooks_for_snapshot SQL>" > /tmp/wb-baseline.txt`), then re-run on this branch and `diff`. This catches the most likely silent regression: a join or ordering change in `db.py` accidentally altering the existing page's output. Cheap, one-shot, no test framework required.

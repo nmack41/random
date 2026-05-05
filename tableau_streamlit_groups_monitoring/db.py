@@ -9,6 +9,7 @@ STATUS_SUCCESS = "success"
 STATUS_FAILED = "failed"
 CHANGE_ADDED = "added"
 CHANGE_REMOVED = "removed"
+CURRENT_SCHEMA_VERSION = 2  # 1 = pre-views; 2 = views + view_group_access added
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS snapshots (
@@ -95,6 +96,10 @@ CREATE TABLE IF NOT EXISTS view_group_access (
 
 CREATE INDEX IF NOT EXISTS idx_vga_snapshot
     ON view_group_access(snapshot_id);
+
+CREATE TABLE IF NOT EXISTS schema_version (
+    version INTEGER PRIMARY KEY
+);
 """
 
 
@@ -109,8 +114,22 @@ def get_connection() -> sqlite3.Connection:
 def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = get_connection()
-    conn.executescript(SCHEMA)
-    conn.close()
+    try:
+        conn.executescript(SCHEMA)
+        row = conn.execute("SELECT version FROM schema_version").fetchone()
+        if row is None:
+            conn.execute(
+                "INSERT INTO schema_version (version) VALUES (?)",
+                (CURRENT_SCHEMA_VERSION,),
+            )
+            conn.commit()
+        elif row["version"] != CURRENT_SCHEMA_VERSION:
+            raise RuntimeError(
+                f"DB schema v{row['version']}, code expects v{CURRENT_SCHEMA_VERSION}. "
+                f"Re-seed or migrate."
+            )
+    finally:
+        conn.close()
 
 
 def create_snapshot(conn: sqlite3.Connection) -> int:
