@@ -109,9 +109,9 @@ The `pages` list drops the Workbooks entry. The remaining order is:
 
 ### Header / caption copy
 
-The header stays `Permissions` (or remains `View Permissions` — see open
-question below). The caption is rewritten to a single paragraph that covers
-both scopes:
+The header changes from today's `View Permissions` to `Permissions` (default —
+see open question below for the alternative). The caption is rewritten to a
+single paragraph that covers both scopes:
 
 > Group access shown at two levels: each workbook's own group rules, and a
 > best-effort view of group access per view under a Read=Allow-only model.
