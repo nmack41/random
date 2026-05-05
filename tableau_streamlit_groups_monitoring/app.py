@@ -1,11 +1,12 @@
 import streamlit as st
 
-st.set_page_config(page_title="Tableau Groups Monitor", page_icon=":busts_in_silhouette:", layout="wide")
+st.set_page_config(page_title="Tableau Groups Monitor", layout="wide")
 
 pages = [
-    st.Page("pages/current_state.py", title="Current State", icon=":mag:"),
-    st.Page("pages/workbooks.py", title="Workbooks", icon=":bar_chart:"),
-    st.Page("pages/changes.py", title="Changes", icon=":chart_with_upwards_trend:"),
+    st.Page("pages/current_state.py", title="Current State", ),
+    st.Page("pages/workbooks.py", title="Workbooks", ),
+    st.Page("pages/views.py", title="Views", ),
+    st.Page("pages/changes.py", title="Changes", ),
 ]
 
 nav = st.navigation(pages)

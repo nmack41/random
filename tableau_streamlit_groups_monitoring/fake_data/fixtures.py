@@ -52,6 +52,42 @@ WORKBOOKS = {
     "wb-008": ("Service Latency",          "Engineering", ["g-engineering"]),
     "wb-009": ("Deploy Frequency",         "Engineering", ["g-engineering"]),
     "wb-010": ("Error Budget",             "Engineering", ["g-engineering", "g-all"]),
+    "wb-011": ("Stranded Dashboard",       "Marketing",   []),
+}
+
+# view_id -> (view_name, workbook_id, explicit_rules)
+#
+# explicit_rules is None    => no explicit view-level group rules; view inherits parent workbook grants
+# explicit_rules is []      => (not used) — distinguish "no rules" from "rules with no Allow" via Deny entry
+# explicit_rules is [(gid, "Allow"|"Deny"), ...] => any explicit Read rule blocks inheritance.
+#                                                   Only "Allow" entries are surfaced as group access;
+#                                                   "Deny" entries are present to block inheritance only.
+#
+# Coverage required by spec:
+#   wb-001: pure inheritance (None)                       -> v-001-1, v-001-2
+#   wb-002: a Deny-only view (audit-safe zero)            -> v-002-2
+#   wb-003: mixed Allow + Deny on same view               -> v-003-1
+#   wb-005: explicit Allow override + plural-diff label   -> v-005-1, v-005-3
+#   wb-007: stale group reference (g-removed)             -> v-007-1
+#   wb-008: explicit Allow that mirrors workbook (no-op)  -> v-008-2
+#   wb-009: zero views                                    -> intentionally absent
+#   wb-011: zero-grant workbook with view-level grants    -> v-011-1
+VIEWS = {
+    "v-001-1": ("Q1 Pipeline by Region",     "wb-001", None),
+    "v-001-2": ("Q1 Forecast Detail",        "wb-001", None),
+    "v-002-1": ("Quarterly Roll-up",         "wb-002", None),
+    "v-002-2": ("Restricted Forecast",       "wb-002", [("g-sales-reps", "Deny")]),
+    "v-003-1": ("Account Detail (Curated)",  "wb-003", [("g-sales-lead", "Allow"), ("g-sales-reps", "Deny")]),
+    "v-004-1": ("Win Reasons",               "wb-004", None),
+    "v-005-1": ("Campaign A Funnel",         "wb-005", [("g-marketing",  "Allow")]),
+    "v-005-2": ("Campaign B Funnel",         "wb-005", None),
+    "v-005-3": ("Campaign C Funnel",         "wb-005", [("g-marketing",  "Deny")]),
+    "v-006-1": ("Lead Score Distribution",   "wb-006", None),
+    "v-007-1": ("Sentiment Daily",           "wb-007", [("g-removed",    "Allow")]),
+    "v-008-1": ("p99 Latency",               "wb-008", None),
+    "v-008-2": ("p50 Latency",               "wb-008", [("g-engineering", "Allow")]),
+    "v-010-1": ("Burn Rate",                 "wb-010", None),
+    "v-011-1": ("Stranded View",             "wb-011", [("g-marketing",  "Allow")]),
 }
 
 # Each snapshot: (timestamp_iso, {group_id: [user_ids]})

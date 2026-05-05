@@ -22,7 +22,7 @@ import config  # noqa: E402
 import db      # noqa: E402
 import diff    # noqa: E402
 
-from fake_data.fixtures import DOMAIN, GROUPS, USERS, WORKBOOKS, SNAPSHOTS  # noqa: E402
+from fake_data.fixtures import DOMAIN, GROUPS, USERS, WORKBOOKS, VIEWS, SNAPSHOTS  # noqa: E402
 
 
 def _wipe_db():
@@ -66,10 +66,51 @@ def _build_workbook_grants() -> list[dict]:
     return grants
 
 
+def _build_views() -> list[dict]:
+    return [
+        {"view_id": v_id, "view_name": name, "workbook_id": workbook_id}
+        for v_id, (name, workbook_id, _rules) in VIEWS.items()
+    ]
+
+
+def _build_view_grants() -> list[dict]:
+    """Resolve view permissions using the same rule snapshot.py applies:
+
+    - If explicit_rules is None, inherit parent workbook grants verbatim.
+    - Otherwise (explicit Read rule(s) exist), block inheritance and surface
+      only Read=Allow entries; Deny entries block inheritance but never grant.
+
+    GROUPS.get(gid) returns None for stale references (e.g. g-removed),
+    matching how snapshot.py stores nullable group_name.
+    """
+    workbook_groups = {wb_id: groups for wb_id, (_n, _p, groups) in WORKBOOKS.items()}
+    grants: list[dict] = []
+    for view_id, (_name, workbook_id, explicit_rules) in VIEWS.items():
+        if explicit_rules is None:
+            for gid in workbook_groups.get(workbook_id, []):
+                grants.append({
+                    "view_id":    view_id,
+                    "group_id":   gid,
+                    "group_name": GROUPS.get(gid),
+                })
+        else:
+            for gid, capability in explicit_rules:
+                if capability != "Allow":
+                    continue
+                grants.append({
+                    "view_id":    view_id,
+                    "group_id":   gid,
+                    "group_name": GROUPS.get(gid),
+                })
+    return grants
+
+
 def seed():
     _wipe_db()
     workbooks = _build_workbooks()
     grants = _build_workbook_grants()
+    views = _build_views()
+    view_grants = _build_view_grants()
 
     snapshot_ids: list[int] = []
     with closing(db.get_connection()) as conn:
@@ -84,6 +125,8 @@ def seed():
             db.insert_members(conn, snapshot_id, _build_members(membership))
             db.insert_workbooks(conn, snapshot_id, workbooks)
             db.insert_workbook_group_access(conn, snapshot_id, grants)
+            db.insert_views(conn, snapshot_id, views)
+            db.insert_view_group_access(conn, snapshot_id, view_grants)
         conn.commit()
 
         change_total = 0
@@ -99,6 +142,8 @@ def seed():
         f"{len(USERS)} users, "
         f"{len(GROUPS)} groups, "
         f"{len(WORKBOOKS)} workbooks across {project_count} projects, "
+        f"{len(VIEWS)} views, "
+        f"{len(view_grants)} view-group grants, "
         f"{change_total} membership changes"
     )
 

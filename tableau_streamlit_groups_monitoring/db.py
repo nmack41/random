@@ -69,6 +69,32 @@ CREATE TABLE IF NOT EXISTS workbook_group_access (
 
 CREATE INDEX IF NOT EXISTS idx_wga_snapshot
     ON workbook_group_access(snapshot_id);
+
+CREATE TABLE IF NOT EXISTS views (
+    id INTEGER PRIMARY KEY,
+    snapshot_id INTEGER NOT NULL REFERENCES snapshots(id),
+    view_id TEXT NOT NULL,
+    view_name TEXT NOT NULL,
+    workbook_id TEXT NOT NULL,
+    UNIQUE (snapshot_id, view_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_views_snapshot
+    ON views(snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_views_workbook
+    ON views(snapshot_id, workbook_id);
+
+CREATE TABLE IF NOT EXISTS view_group_access (
+    id INTEGER PRIMARY KEY,
+    snapshot_id INTEGER NOT NULL REFERENCES snapshots(id),
+    view_id TEXT NOT NULL,
+    group_id TEXT NOT NULL,
+    group_name TEXT,
+    UNIQUE (snapshot_id, view_id, group_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_vga_snapshot
+    ON view_group_access(snapshot_id);
 """
 
 
@@ -169,6 +195,42 @@ def get_workbooks_for_snapshot(conn: sqlite3.Connection, snapshot_id: int) -> li
             AND a.workbook_id = w.workbook_id
            WHERE w.snapshot_id = ?
            ORDER BY w.project_name, w.workbook_name, a.group_name""",
+        (snapshot_id,),
+    ).fetchall()
+
+
+def insert_views(conn: sqlite3.Connection, snapshot_id: int, views: list[dict]):
+    conn.executemany(
+        """INSERT INTO views
+           (snapshot_id, view_id, view_name, workbook_id)
+           VALUES (:snapshot_id, :view_id, :view_name, :workbook_id)""",
+        [{"snapshot_id": snapshot_id, **v} for v in views],
+    )
+
+
+def insert_view_group_access(conn: sqlite3.Connection, snapshot_id: int, grants: list[dict]):
+    conn.executemany(
+        """INSERT INTO view_group_access
+           (snapshot_id, view_id, group_id, group_name)
+           VALUES (:snapshot_id, :view_id, :group_id, :group_name)""",
+        [{"snapshot_id": snapshot_id, **g} for g in grants],
+    )
+
+
+def get_views_for_snapshot(conn: sqlite3.Connection, snapshot_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        """SELECT w.workbook_id, w.workbook_name, w.project_name,
+                  v.view_id, v.view_name,
+                  a.group_id, a.group_name
+           FROM workbooks w
+           LEFT JOIN views v
+             ON v.snapshot_id = w.snapshot_id
+            AND v.workbook_id = w.workbook_id
+           LEFT JOIN view_group_access a
+             ON a.snapshot_id = v.snapshot_id
+            AND a.view_id = v.view_id
+           WHERE w.snapshot_id = ?
+           ORDER BY w.project_name, w.workbook_name, v.view_name, a.group_name""",
         (snapshot_id,),
     ).fetchall()
 
