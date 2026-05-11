@@ -155,7 +155,11 @@ def take_snapshot():
     conn.commit()
 
     try:
-        server = TSC.Server(config.TABLEAU_SERVER_URL, use_server_version=True)
+        # Pinned explicitly: our server has retired API 2.4, so TSC's
+        # use_server_version probe (which starts at 2.4) gets a 404003 and
+        # silently falls back to 2.4 — below the 3.2 minimum for views.get.
+        server = TSC.Server(config.TABLEAU_SERVER_URL)
+        server.version = "3.22"
         auth = TSC.PersonalAccessTokenAuth(
             config.TABLEAU_PAT_NAME,
             config.TABLEAU_PAT_SECRET,
