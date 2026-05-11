@@ -74,12 +74,34 @@ for r in rows:
         view["group_ids"].add(r["group_id"])
 
 # Third pass: flag views whose effective group set diverges from the parent
-# workbook's. Suppressed for workbooks with zero group grants — divergence
-# isn't meaningful when the parent has no rules to diverge from.
+# workbook's, and count how many groups were added/removed at the view level.
+# Suppressed for workbooks with zero group grants — divergence isn't meaningful
+# when the parent has no rules to diverge from.
 for wb in workbooks.values():
     skip_diff = not wb["wb_group_ids"]
     for v in wb["views"].values():
-        v["differs"] = (not skip_diff) and (v["group_ids"] != wb["wb_group_ids"])
+        if skip_diff:
+            v["added"] = 0
+            v["removed"] = 0
+        else:
+            v["added"] = len(v["group_ids"] - wb["wb_group_ids"])
+            v["removed"] = len(wb["wb_group_ids"] - v["group_ids"])
+        v["differs"] = v["added"] > 0 or v["removed"] > 0
+
+
+def format_delta(added: int, removed: int) -> str:
+    """Render the per-view group diff for the Δ column.
+
+    Empty when there's no diff (matches the existing "blank = no signal" convention).
+    Drops the zero side when only one direction has changes, so the column reads
+    as compactly as possible at a glance.
+    """
+    parts = []
+    if added:
+        parts.append(f"+{added}")
+    if removed:
+        parts.append(f"-{removed}")
+    return " / ".join(parts)
 
 total_views = sum(len(wb["views"]) for wb in workbooks.values())
 no_access = sum(1 for wb in workbooks.values() if not wb["wb_group_ids"])
@@ -90,6 +112,7 @@ col3.metric("Workbooks with no group access", no_access)
 
 search = st.text_input("Search workbook, project, view, or group name")
 needle = search.strip().lower()
+show_only_differing = st.checkbox("Show only differing views", value=False)
 
 
 def workbook_matches(wb: dict) -> bool:
@@ -111,36 +134,45 @@ if needle:
     if not items:
         st.info(f"No workbooks match '{search.strip()}'.")
 
-COLUMNS = ["View", "Groups with access", "Differs from workbook"]
+COLUMNS = ["View", "Groups with access", "Δ"]
 
 # Auto-expand on search: passing `expanded=bool(needle)` is read on every Streamlit rerun
 # (it's not a one-shot initial-state prop), so this stays reactive without session_state.
 for wb_id, wb in items:
     base_label = f"{wb['project']} / {wb['name']}" if wb["project"] else wb["name"]
     n_diff = sum(1 for v in wb["views"].values() if v["differs"])
+
+    # When the filter is on, skip workbooks with no divergence entirely — otherwise
+    # the user sees a wall of empty expanders.
+    if show_only_differing and n_diff == 0:
+        continue
+
     if n_diff > 0:
         noun = "view" if n_diff == 1 else "views"
         label = f":orange[**{base_label}**] ({n_diff} {noun} differ)"
     else:
         label = base_label
-    with st.expander(label, expanded=bool(needle)):
+    # Auto-expand when filtering, too — the whole point is to see the diffs.
+    with st.expander(label, expanded=bool(needle) or show_only_differing):
         wb_df = pd.DataFrame(
             [{"Workbook groups": ", ".join(wb["wb_group_names"]) or PLACEHOLDER}]
         )
         st.dataframe(wb_df, use_container_width=True, hide_index=True)
 
         if not wb["views"]:
-            records = [{"View": PLACEHOLDER, "Groups with access": PLACEHOLDER, "Differs from workbook": PLACEHOLDER}]
+            records = [{"View": PLACEHOLDER, "Groups with access": PLACEHOLDER, "Δ": PLACEHOLDER}]
         else:
             # Pre-sort differing rows to the top so the audit signal is visible without
             # requiring a column-header sort click. Stable sort preserves the underlying
             # SQL view-name ordering within each group.
             ordered_views = sorted(wb["views"].values(), key=lambda v: not v["differs"])
+            if show_only_differing:
+                ordered_views = [v for v in ordered_views if v["differs"]]
             records = [
                 {
                     "View": v["name"],
                     "Groups with access": ", ".join(v["groups"]) if v["groups"] else PLACEHOLDER,
-                    "Differs from workbook": "Yes" if v["differs"] else "",
+                    "Δ": format_delta(v["added"], v["removed"]),
                 }
                 for v in ordered_views
             ]
