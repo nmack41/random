@@ -19,24 +19,64 @@ GROUPS = {
     "g-all":         "All Employees",
 }
 
-# user_id -> (user_name, site_role)
+# user_id -> (user_name, default_site_role)
+# u-017 is intentionally absent from every group's membership in SNAPSHOTS — a
+# "zero-group" service account that should still appear on the Users page via the
+# LEFT JOIN in get_users_for_snapshot.
 USERS = {
-    "u-001": ("alice.brennan", "Creator"),
-    "u-002": ("bob.choi",      "Creator"),
-    "u-003": ("carol.davis",   "Explorer"),
-    "u-004": ("david.evans",   "Explorer"),
-    "u-005": ("eve.foster",    "Explorer"),
-    "u-006": ("frank.garcia",  "Explorer"),
-    "u-007": ("grace.hill",    "Explorer"),
-    "u-008": ("henry.ito",     "Viewer"),
-    "u-009": ("iris.jones",    "Viewer"),
-    "u-010": ("jack.kim",      "Viewer"),
-    "u-011": ("kate.lewis",    "Viewer"),
-    "u-012": ("leo.martin",    "Viewer"),
-    "u-013": ("mia.nelson",    "Viewer"),
-    "u-014": ("nick.owen",     "Viewer"),
-    "u-015": ("olivia.park",   "Viewer"),
-    "u-016": ("paul.quinn",    "Viewer"),
+    "u-001": ("alice.brennan",  "Creator"),
+    "u-002": ("bob.choi",       "Creator"),
+    "u-003": ("carol.davis",    "Explorer"),
+    "u-004": ("david.evans",    "Explorer"),
+    "u-005": ("eve.foster",     "Explorer"),
+    "u-006": ("frank.garcia",   "Explorer"),
+    "u-007": ("grace.hill",     "Explorer"),
+    "u-008": ("henry.ito",      "Viewer"),
+    "u-009": ("iris.jones",     "Viewer"),
+    "u-010": ("jack.kim",       "Viewer"),
+    "u-011": ("kate.lewis",     "Viewer"),
+    "u-012": ("leo.martin",     "Viewer"),
+    "u-013": ("mia.nelson",     "Viewer"),
+    "u-014": ("nick.owen",      "Viewer"),
+    "u-015": ("olivia.park",    "Viewer"),
+    "u-016": ("paul.quinn",     "Viewer"),
+    "u-017": ("service.bot",    "Viewer"),
+}
+
+# Users who exist on the site but are in no group. Included in every snapshot's
+# users table; never appear in any membership list.
+ZERO_GROUP_USERS = ["u-017"]
+
+# user_id -> ISO last_login (or None for 'never').
+# Values are static — they drift relative to "now" as time passes, which is
+# realistic and gives the humanizer column natural variety on any day.
+LAST_LOGIN_BY_USER = {
+    "u-001": "2026-05-13T11:00:00",  # ~1 hour ago at seed
+    "u-002": "2026-05-13T08:00:00",  # ~4 hours ago
+    "u-003": "2026-05-12T09:00:00",  # ~1 day ago
+    "u-004": "2026-05-10T14:00:00",  # ~3 days ago
+    "u-005": None,                    # never
+    "u-006": "2026-04-29T12:00:00",  # ~2 weeks ago
+    "u-007": "2026-05-13T11:45:00",  # ~15 min ago
+    "u-008": "2026-04-13T09:00:00",  # ~1 month ago
+    "u-009": None,                    # never
+    "u-010": "2026-05-13T11:59:00",  # just now
+    "u-011": "2025-11-13T09:00:00",  # ~6 months ago
+    "u-012": "2026-05-11T16:00:00",  # ~2 days ago
+    "u-013": "2026-05-13T07:00:00",  # ~5 hours ago
+    "u-014": "2026-04-20T08:00:00",  # frozen at last login before site removal
+    "u-015": "2026-05-13T03:00:00",  # ~9 hours ago
+    "u-016": "2026-04-27T08:00:00",  # frozen at join time; hasn't logged in since
+    "u-017": None,                    # service account, never interactive
+}
+
+# user_id -> {snapshot_index: overriding_site_role}.
+# Used to exercise user_diff's 'site_role_changed' path. The default site_role
+# comes from USERS; this dict overrides it for specific snapshots only.
+# u-013 (mia.nelson) is promoted from Viewer -> Explorer in snapshot index 2,
+# mirroring the existing fixture narrative ("promoted from Engineering to Sales Leadership").
+SITE_ROLE_OVERRIDES = {
+    "u-013": {2: "Explorer"},
 }
 
 # workbook_id -> (workbook_name, project_name, [group_ids_with_access])

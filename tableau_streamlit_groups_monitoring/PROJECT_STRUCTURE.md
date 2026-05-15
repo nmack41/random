@@ -11,10 +11,15 @@ tableau_streamlit_groups_monitoring/
 ├── db.py                   # SQLite schema, connection factory, all query helpers
 ├── snapshot.py             # CLI: connects to Tableau Server, captures group memberships
 ├── diff.py                 # Diff engine: computes additions/removals between snapshots
+├── user_diff.py            # User-level diff: added/removed/site_role_changed
+├── formatting.py           # Shared display formatters (e.g., humanize_last_login)
 ├── app.py                  # Streamlit entry point: sets up multi-page navigation
 ├── pages/
 │   ├── current_state.py    # Page 1: browse and search group memberships
-│   └── changes.py          # Page 2: view membership changes over time
+│   ├── users.py            # Page 2: full user roster including zero-group users
+│   ├── views.py            # Page 3: workbook + view permissions audit
+│   ├── access_audit.py     # Page 4: for a view/workbook, list users with access + granting groups
+│   └── changes.py          # Page 5: view membership changes over time
 ├── data/
 │   └── groups.db           # SQLite database (auto-created on first run, gitignored)
 ├── spec.md                 # Original design document
@@ -174,6 +179,19 @@ The results are written to the `membership_changes` table.
 
 ---
 
+### user_diff.py
+
+**Purpose:** Computes per-user changes between two snapshots — additions, removals, and site-role changes.
+
+**Algorithm:** Three INSERT statements writing to `user_changes`:
+- **added** — `user_id` in current snapshot but not previous (subquery `NOT IN`)
+- **removed** — `user_id` in previous but not current
+- **site_role_changed** — JOIN on `user_id` across both snapshots where `site_role` differs; old_value/new_value carry the previous/current role
+
+Like `diff.py`, runs in the best-effort post-snapshot block in `snapshot.py`: a failure here does not downgrade the snapshot status. Also has a CLI mode (`python user_diff.py <prev> <curr>`).
+
+---
+
 ### app.py
 
 **Purpose:** Streamlit entry point. Configures the app and sets up multi-page navigation.
@@ -206,9 +224,72 @@ The results are written to the `membership_changes` table.
 
 ---
 
+### pages/users.py
+
+**Purpose:** Full user roster — every site user, including those in zero groups.
+
+**What it does:**
+1. Loads the list of successful snapshots and shows a dropdown
+2. Calls `db.get_users_for_snapshot()` which SQL-side `GROUP_CONCAT`s each user's groups so the result is one row per user (zero-group users included via LEFT JOIN)
+3. Humanizes `last_login` to relative phrasing ("23 days ago", "never") for display; the raw ISO timestamp is hidden from the table but used in CSV export
+4. Displays a single metric tile (Total users) — domain/site-role breakdowns deferred per plan
+5. Search matches across `user_name`, `full_name`, `email`, `domain_name`, and the joined `groups` string
+6. The `groups` column is hidden by default; a checkbox surfaces it
+7. CSV export uses raw ISO `last_login` for sortability
+
+**Imports:** `db` (for `get_connection`, `get_snapshot_list`, `get_users_for_snapshot`), `streamlit`, `pandas`
+
+**Empty-state:** When `get_users_for_snapshot` returns no rows, the page surfaces a hint pointing to Gate 1 of the plan doc — non-admin PATs return no users, which would otherwise look like a bug.
+
+---
+
+### pages/views.py
+
+**Purpose:** Audit page — group-level access to workbooks and their views.
+
+**What it does:**
+1. Per-workbook expanders showing the workbook's group grants and each view's effective groups
+2. Flags views whose effective group set diverges from the parent workbook (with `Δ` column showing +added/-removed counts)
+3. Search across workbook, project, view, and group names
+4. "Show only differing views" filter for fast audit triage
+
+**Imports:** `db` (for `get_connection`, `get_snapshot_list`, `get_workbooks_for_snapshot`, `get_views_for_snapshot`), `streamlit`, `pandas`
+
+---
+
+### pages/access_audit.py
+
+**Purpose:** Inverted audit — given a view or workbook, list every user who has access via group membership, with the group(s) granting that access.
+
+**What it does:**
+1. Snapshot selector, then a `View | Workbook` radio toggle
+2. Searchable selectbox of all views/workbooks in the snapshot, labelled `{project} / {workbook}[/ {view}]` for disambiguation
+3. Runs the 4-table chain (`view_group_access` or `workbook_group_access` → `group_members` → `users`) via `db.get_users_with_access_to_view` / `db.get_users_with_access_to_workbook`
+4. Shows a `Via Groups` column (`GROUP_CONCAT(DISTINCT)`) so multi-group access reads as `Sales, Marketing` on one row
+5. Search across name, email, domain, and the granting group string
+6. CSV export with raw ISO `last_login` and a filename encoding target type + slugified target label
+
+**Imports:** `db`, `formatting` (shared `humanize_last_login`), `streamlit`, `pandas`
+
+**Empty-state:** Distinguishes two cases via a separate count query: `granted_group_count=0` means "no groups have access" (audit gap), `>0` with zero users means "groups have access but no members" (often a stale group definition). Different messages because the next-step diagnosis is different.
+
+**Caveat in caption:** Workbook-level access doesn't guarantee per-view access — individual views can override with explicit Read=Allow/Deny rules. The Views page is authoritative for per-view truth; this page's workbook view is for the "who has the keys at the workbook level?" question.
+
+---
+
+### formatting.py
+
+**Purpose:** Shared display formatters for Streamlit pages.
+
+**Currently exports:** `humanize_last_login(value) -> str` — renders a `last_login` timestamp as a relative phrase (`"23 days ago"`, `"never"`). Granularity widens as the gap grows so the column stays scannable. Used by `pages/users.py` and `pages/access_audit.py`.
+
+**Imports:** `pandas`, `datetime` — no project imports, so it's safe to use from any page without circular-import risk.
+
+---
+
 ### pages/changes.py
 
-**Purpose:** Page 2 of the dashboard — shows membership additions and removals between two snapshots.
+**Purpose:** Shows membership additions and removals between two snapshots.
 
 **What it does:**
 1. Loads the list of successful snapshots

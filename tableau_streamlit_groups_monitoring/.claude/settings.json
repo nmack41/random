@@ -15,7 +15,20 @@
       "Skill(commit-commands:commit)",
       "Skill(commit-commands:commit:*)",
       "Bash(git -C /Users/nickm/github/random/tableau_streamlit_groups_monitoring add docs/superpowers/specs/2026-05-01-workbook-view-permissions-design.md)",
-      "Bash(git -C /Users/nickm/github/random/tableau_streamlit_groups_monitoring commit -m 'Add design spec for workbook & view permissions feature *)"
+      "Bash(git -C /Users/nickm/github/random/tableau_streamlit_groups_monitoring commit -m 'Add design spec for workbook & view permissions feature *)",
+      "Bash(git push *)",
+      "mcp__pal__consensus",
+      "Bash(pip3 install *)",
+      "Bash(FAKE_DATA=1 python3)",
+      "mcp__pal__precommit",
+      "Bash(FAKE_DATA=1 python3 -c ' *)",
+      "Bash(FAKE_DATA=1 timeout 15 streamlit run app.py --server.headless true --server.port 8502 --browser.gatherUsageStats false)",
+      "Bash(curl -s \"http://localhost:8502/access_audit\" --max-time 5)",
+      "Bash(kill %1)",
+      "Bash(/Library/Frameworks/Python.framework/Versions/3.14/bin/python3 -c \"import pandas; print\\(pandas.__version__\\)\")",
+      "Bash(FAKE_DATA=1 /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 -c ' *)",
+      "Bash(ls -la ../mesa/ | head -20)",
+      "Read(//Users/nickm/github/random/mesa/**)"
     ],
     "additionalDirectories": [
       "/Users/nickm/.claude/projects/-Users-nickm-github-random-tableau-streamlit-groups-monitoring",

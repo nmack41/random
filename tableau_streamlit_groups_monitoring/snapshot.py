@@ -12,6 +12,7 @@ import tableauserverclient as TSC
 import config
 import db
 from diff import compute_diff
+from user_diff import compute_user_diff
 
 PAGE_SIZE = 100
 
@@ -148,6 +149,36 @@ def fetch_all_view_permissions(
     return views, view_grants
 
 
+def fetch_all_users(server: TSC.Server) -> list[dict]:
+    """Fetch every site user from the REST API.
+
+    Requires the PAT to have Site Admin or Server Admin scope; a non-admin
+    token will either 403 or silently return only the caller's own record
+    (Gate 1 in docs/dev/users_add.md).
+
+    TSC exposes `fullname` (one word) on UserItem. `last_login` may be absent
+    or None depending on API version and user activity — store as ISO string
+    when present, NULL otherwise (Gate 2).
+    """
+    users = []
+    all_users = list(TSC.Pager(server.users.get))
+    print(f"Found {len(all_users)} users")
+    for u in all_users:
+        last_login = getattr(u, "last_login", None)
+        if last_login is not None and hasattr(last_login, "isoformat"):
+            last_login = last_login.isoformat()
+        users.append({
+            "user_id": u.id,
+            "user_name": u.name,
+            "full_name": getattr(u, "fullname", None),
+            "email": getattr(u, "email", None),
+            "site_role": u.site_role,
+            "domain_name": getattr(u, "domain_name", "") or "",
+            "last_login": last_login,
+        })
+    return users
+
+
 def take_snapshot():
     """Authenticate, snapshot all group memberships, and compute diff."""
     conn = db.get_connection()
@@ -170,15 +201,18 @@ def take_snapshot():
             members, group_id_to_name = fetch_all_group_members(server)
             workbooks, grants = fetch_all_workbook_permissions(server, group_id_to_name)
             views, view_grants = fetch_all_view_permissions(server, grants, group_id_to_name)
+            users = fetch_all_users(server)
 
         print(f"Captured {len(members)} total memberships")
         print(f"Captured {len(workbooks)} workbooks, {len(grants)} workbook-group grants")
         print(f"Captured {len(views)} views, {len(view_grants)} view-group grants")
+        print(f"Captured {len(users)} users")
         db.insert_members(conn, snapshot_id, members)
         db.insert_workbooks(conn, snapshot_id, workbooks)
         db.insert_workbook_group_access(conn, snapshot_id, grants)
         db.insert_views(conn, snapshot_id, views)
         db.insert_view_group_access(conn, snapshot_id, view_grants)
+        db.insert_users(conn, snapshot_id, users)
         db.complete_snapshot(conn, snapshot_id, db.STATUS_SUCCESS)
         conn.commit()
     except Exception as e:
@@ -203,8 +237,14 @@ def take_snapshot():
         previous_id = db.get_previous_snapshot_id(conn, snapshot_id)
         if previous_id is not None:
             summary = compute_diff(conn, previous_id, snapshot_id)
+            user_summary = compute_user_diff(conn, previous_id, snapshot_id)
             conn.commit()
             print(f"Diff vs snapshot #{previous_id}: {summary['added']} added, {summary['removed']} removed")
+            print(
+                f"User diff vs snapshot #{previous_id}: "
+                f"{user_summary['added']} added, {user_summary['removed']} removed, "
+                f"{user_summary['site_role_changed']} site-role changes"
+            )
         else:
             print("First snapshot — no previous data to diff against")
     except Exception as e:

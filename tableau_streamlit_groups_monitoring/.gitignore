@@ -4,3 +4,6 @@ fake_data
 __pycache__/
 *.pyc
 .streamlit/secrets.toml
+.playwright-mcp/
+.claude/scheduled_tasks.lock
+*.png
