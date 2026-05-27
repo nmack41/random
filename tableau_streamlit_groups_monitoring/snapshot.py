@@ -199,6 +199,10 @@ def take_snapshot():
         # silently falls back to 2.4 — below the 3.2 minimum for views.get.
         server = TSC.Server(config.TABLEAU_SERVER_URL)
         server.version = "3.22"
+        # Internal Tableau Server uses a corporate CA chain that isn't in
+        # Python's default trust store — disable verification rather than
+        # ship the CA bundle with this tool.
+        server.add_http_options({"verify": False})
         auth = TSC.PersonalAccessTokenAuth(
             config.TABLEAU_PAT_NAME,
             config.TABLEAU_PAT_SECRET,
