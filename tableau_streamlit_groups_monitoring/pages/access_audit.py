@@ -362,7 +362,19 @@ with closing(db.get_connection()) as conn:
             aggfunc="first",
             fill_value="",
         )
-        matrix = matrix.sort_index().sort_index(axis=1)
+
+        # Reindex against the full group inventory so groups with zero grants
+        # on the selected targets still appear as fully-empty rows — the
+        # "absence is the audit signal" lens. Legacy snapshots (pre-v4) fall
+        # back to DISTINCT groups from group_members, which still misses
+        # zero-member groups but is better than only-granted-groups.
+        all_group_rows = db.get_groups_for_snapshot(conn, selected_snapshot_id)
+        if all_group_rows:
+            all_group_names = sorted({r["group_name"] for r in all_group_rows})
+        else:
+            member_rows = db.get_members_for_snapshot(conn, selected_snapshot_id)
+            all_group_names = sorted({r["group_name"] for r in member_rows})
+        matrix = matrix.reindex(index=all_group_names, fill_value="").sort_index(axis=1)
 
         col1, col2, col3 = st.columns(3)
         col1.metric("Groups", matrix.shape[0])
