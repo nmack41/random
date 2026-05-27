@@ -11,12 +11,18 @@ Sales Leadership across all three snapshots.
 DOMAIN = "acmeco"
 
 # group_id -> group_name
+#
+# g-deprecated is the canonical orphan-group fixture: it exists in the inventory
+# but has zero members across every snapshot and is not granted access to any
+# workbook or view. Exercises the Anomalies & Orphans tab's "groups with no
+# grants anywhere" and "granted-but-empty groups" paths.
 GROUPS = {
     "g-sales-lead":  "Sales Leadership",
     "g-sales-reps":  "Sales Reps",
     "g-marketing":   "Marketing Analysts",
     "g-engineering": "Engineering",
     "g-all":         "All Employees",
+    "g-deprecated":  "Deprecated Legacy Group",
 }
 
 # user_id -> (user_name, default_site_role)

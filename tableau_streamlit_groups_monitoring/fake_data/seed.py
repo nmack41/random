@@ -46,6 +46,13 @@ def _role_for(uid: str, snapshot_index: int) -> str:
     return SITE_ROLE_OVERRIDES.get(uid, {}).get(snapshot_index, default)
 
 
+def _build_groups() -> list[dict]:
+    return [
+        {"group_id": gid, "group_name": gname, "domain_name": DOMAIN}
+        for gid, gname in GROUPS.items()
+    ]
+
+
 def _build_members(snapshot_index: int, membership: dict[str, list[str]]) -> list[dict]:
     rows = []
     for group_id, user_ids in membership.items():
@@ -162,6 +169,7 @@ def seed():
             snapshot_id = cur.lastrowid
             snapshot_ids.append(snapshot_id)
 
+            db.insert_groups(conn, snapshot_id, _build_groups())
             db.insert_members(conn, snapshot_id, _build_members(idx, membership))
             db.insert_workbooks(conn, snapshot_id, workbooks)
             db.insert_workbook_group_access(conn, snapshot_id, grants)

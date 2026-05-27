@@ -13,6 +13,7 @@ GROUPS_BY_WORKBOOKS = "Groups × Workbooks"
 GROUPS_BY_VIEWS = "Groups × Views"
 USERS_BY_WORKBOOKS = "Users × Workbooks"
 USERS_BY_VIEWS = "Users × Views"
+ANOMALIES = "Anomalies & Orphans"
 
 st.header("Access Audit")
 st.caption(
@@ -44,9 +45,175 @@ with closing(db.get_connection()) as conn:
             VIEW, WORKBOOK, ALL_GRANTS,
             GROUPS_BY_WORKBOOKS, GROUPS_BY_VIEWS,
             USERS_BY_WORKBOOKS, USERS_BY_VIEWS,
+            ANOMALIES,
         ],
         horizontal=True,
     )
+
+    if target_type == ANOMALIES:
+        st.subheader("Anomalies & Orphans")
+        st.caption(
+            "Cleanup candidates surfaced by the *absence* of access. Every "
+            "finding here is computed against group-grant data — direct user "
+            "grants, project-level locks, and admin roles are not reflected, "
+            "so an entity flagged below may still be reachable through paths "
+            "this tool doesn't capture."
+        )
+
+        workbook_rows = db.get_workbooks_for_snapshot(conn, selected_snapshot_id)
+        view_rows = db.get_views_for_snapshot(conn, selected_snapshot_id)
+        group_rows = db.get_groups_for_snapshot(conn, selected_snapshot_id)
+        wb_grants_rows = db.get_all_workbook_grants_for_snapshot(conn, selected_snapshot_id)
+        view_grants_rows = db.get_all_view_grants_for_snapshot(conn, selected_snapshot_id)
+
+        # Empty `groups` table = pre-v4 snapshot. The zero-grant-groups finding
+        # depends on the inventory, so disable it gracefully with a banner.
+        legacy_snapshot = len(group_rows) == 0
+        if legacy_snapshot:
+            st.warning(
+                "This snapshot pre-dates the groups inventory (schema v4). "
+                "'Groups with no grants anywhere' is unavailable — re-snapshot "
+                "to detect zero-grant groups."
+            )
+
+        wb_df = pd.DataFrame([dict(r) for r in workbook_rows])
+        view_df = pd.DataFrame([dict(r) for r in view_rows])
+        grp_df = pd.DataFrame([dict(r) for r in group_rows])
+        wb_grants_df = pd.DataFrame([dict(r) for r in wb_grants_rows])
+        view_grants_df = pd.DataFrame([dict(r) for r in view_grants_rows])
+
+        # Finding 1: workbooks with no group grants.
+        # get_workbooks_for_snapshot LEFT JOINs grants, so workbooks without any
+        # grants surface as rows where group_id is NULL.
+        if not wb_df.empty:
+            orphan_workbooks = (
+                wb_df[wb_df["group_id"].isna()]
+                [["project_name", "workbook_name"]]
+                .drop_duplicates()
+                .sort_values(["project_name", "workbook_name"])
+                .reset_index(drop=True)
+            )
+        else:
+            orphan_workbooks = pd.DataFrame(columns=["project_name", "workbook_name"])
+
+        # Finding 2: views with no effective group access.
+        # snapshot.py materializes inherited workbook grants into view_group_access
+        # at capture time (fetch_all_view_permissions: "else inherit the parent
+        # workbook's grants verbatim"), so a view with zero rows in that table
+        # genuinely has no group access via any path. No intersection needed.
+        # view_id can be NULL when a workbook has zero views — filter those out.
+        if not view_df.empty:
+            orphan_views = (
+                view_df[view_df["group_id"].isna() & view_df["view_id"].notna()]
+                [["project_name", "workbook_name", "view_name"]]
+                .drop_duplicates()
+                .sort_values(["project_name", "workbook_name", "view_name"])
+                .reset_index(drop=True)
+            )
+        else:
+            orphan_views = pd.DataFrame(columns=["project_name", "workbook_name", "view_name"])
+
+        # Finding 3: granted-but-empty groups.
+        # member_count comes from a LEFT JOIN to group_members in the grants
+        # queries, so 0 means "granted access but has no members". Includes
+        # <unresolved:...> stale references — those are also a cleanup signal.
+        empty_granted_frames = []
+        if not wb_grants_df.empty:
+            empty_granted_frames.append(
+                wb_grants_df.loc[wb_grants_df["member_count"] == 0, ["group_id", "group_name"]]
+            )
+        if not view_grants_df.empty:
+            empty_granted_frames.append(
+                view_grants_df.loc[view_grants_df["member_count"] == 0, ["group_id", "group_name"]]
+            )
+        if empty_granted_frames:
+            empty_granted = (
+                pd.concat(empty_granted_frames, ignore_index=True)
+                .drop_duplicates()
+                .sort_values("group_name")
+                .reset_index(drop=True)
+            )
+        else:
+            empty_granted = pd.DataFrame(columns=["group_id", "group_name"])
+
+        # Finding 4: groups with no grants anywhere. Anti-join the v4 groups
+        # inventory against the union of workbook and view grant group_ids.
+        if legacy_snapshot:
+            zero_grant_groups = pd.DataFrame(columns=["group_id", "group_name", "domain_name"])
+        else:
+            granted_group_ids: set[str] = set()
+            if not wb_grants_df.empty:
+                granted_group_ids.update(wb_grants_df["group_id"].dropna().tolist())
+            if not view_grants_df.empty:
+                granted_group_ids.update(view_grants_df["group_id"].dropna().tolist())
+            zero_grant_groups = (
+                grp_df[~grp_df["group_id"].isin(granted_group_ids)]
+                .sort_values("group_name")
+                .reset_index(drop=True)
+            )
+
+        snapshot_ts = snapshot_options[selected_snapshot_id].split(" — ")[1].replace(":", "-")
+
+        def _render_finding(
+            title: str,
+            df: pd.DataFrame,
+            columns: list[str],
+            file_stem: str,
+            hint: str | None,
+        ) -> None:
+            with st.expander(f"{title} ({len(df)})", expanded=len(df) > 0):
+                if hint:
+                    st.caption(hint)
+                if df.empty:
+                    st.caption("_No findings._")
+                    return
+                display = df[columns].rename(
+                    columns=lambda c: c.replace("_", " ").title()
+                )
+                st.dataframe(display, use_container_width=True, hide_index=True)
+                st.download_button(
+                    "Export CSV",
+                    data=display.to_csv(index=False),
+                    file_name=f"anomalies_{file_stem}_{snapshot_ts}.csv",
+                    mime="text/csv",
+                    key=f"dl_{file_stem}",
+                )
+
+        _render_finding(
+            "Workbooks with no group grants",
+            orphan_workbooks,
+            ["project_name", "workbook_name"],
+            "ungranted_workbooks",
+            "No group-based grant on the workbook. Direct user grants and "
+            "project-level locks (not captured here) may still allow access.",
+        )
+        _render_finding(
+            "Views with no group access",
+            orphan_views,
+            ["project_name", "workbook_name", "view_name"],
+            "ungranted_views",
+            "Views with no group rows in the access table — inheritance from "
+            "the parent workbook was already applied at capture time, so this "
+            "represents the effective state.",
+        )
+        _render_finding(
+            "Granted-but-empty groups",
+            empty_granted,
+            ["group_name", "group_id"],
+            "empty_granted_groups",
+            "Groups that grant access to a workbook or view but have zero "
+            "members. Stale policy or recently-emptied group.",
+        )
+        if not legacy_snapshot:
+            _render_finding(
+                "Groups with no grants anywhere",
+                zero_grant_groups,
+                ["group_name", "domain_name", "group_id"],
+                "zero_grant_groups",
+                "Groups present on the site that grant access to no workbook "
+                "or view. Cleanup candidates.",
+            )
+        st.stop()
 
     if target_type == ALL_GRANTS:
         view_grants = db.get_all_view_grants_for_snapshot(conn, selected_snapshot_id)
@@ -364,11 +531,15 @@ with closing(db.get_connection()) as conn:
             format_func=lambda x: labels[x],
         )
         rows = db.get_users_with_access_to_view(conn, selected_snapshot_id, target_id)
-        # Count granted groups to disambiguate the two empty-state cases below.
-        granted_group_count = conn.execute(
-            "SELECT COUNT(*) AS c FROM view_group_access WHERE snapshot_id = ? AND view_id = ?",
+        # Fetch granted group names so the empty-state below can name the
+        # stale-but-granted groups instead of just counting them.
+        granted_groups = conn.execute(
+            """SELECT COALESCE(group_name, '<unresolved:' || group_id || '>') AS group_name
+               FROM view_group_access
+               WHERE snapshot_id = ? AND view_id = ?
+               ORDER BY group_name""",
             (selected_snapshot_id, target_id),
-        ).fetchone()["c"]
+        ).fetchall()
     else:
         options = db.get_workbook_options_for_snapshot(conn, selected_snapshot_id)
         if not options:
@@ -386,25 +557,30 @@ with closing(db.get_connection()) as conn:
             format_func=lambda x: labels[x],
         )
         rows = db.get_users_with_access_to_workbook(conn, selected_snapshot_id, target_id)
-        granted_group_count = conn.execute(
-            "SELECT COUNT(*) AS c FROM workbook_group_access WHERE snapshot_id = ? AND workbook_id = ?",
+        granted_groups = conn.execute(
+            """SELECT COALESCE(group_name, '<unresolved:' || group_id || '>') AS group_name
+               FROM workbook_group_access
+               WHERE snapshot_id = ? AND workbook_id = ?
+               ORDER BY group_name""",
             (selected_snapshot_id, target_id),
-        ).fetchone()["c"]
+        ).fetchall()
 
 if not rows:
     # Distinguish "no groups granted access" from "groups granted but all empty" —
     # different audit signals: the first is a permissions gap, the second is a stale
     # group definition.
-    if granted_group_count == 0:
+    if not granted_groups:
         st.info(
             f"No groups have access to this {target_type.lower()}. "
             "Access (if any) would come from direct user grants or project-level locks, "
             "neither of which is captured by this tool."
         )
     else:
+        names = ", ".join(g["group_name"] for g in granted_groups)
         st.info(
-            f"{granted_group_count} group(s) are granted access, but they have no members. "
-            "Either the groups are empty, or membership data is missing for this snapshot."
+            f"{len(granted_groups)} group(s) are granted access, but they have no members: "
+            f"**{names}**. Either the groups are empty, or membership data is "
+            "missing for this snapshot."
         )
     st.stop()
 

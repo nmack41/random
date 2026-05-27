@@ -10,7 +10,7 @@ STATUS_FAILED = "failed"
 CHANGE_ADDED = "added"
 CHANGE_REMOVED = "removed"
 CHANGE_SITE_ROLE = "site_role_changed"
-CURRENT_SCHEMA_VERSION = 3  # 1 = pre-views; 2 = views + view_group_access; 3 = users + user_changes
+CURRENT_SCHEMA_VERSION = 4  # 1 = pre-views; 2 = views + view_group_access; 3 = users + user_changes; 4 = groups inventory
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS snapshots (
@@ -129,6 +129,17 @@ CREATE TABLE IF NOT EXISTS user_changes (
 CREATE INDEX IF NOT EXISTS idx_uc_current ON user_changes(current_snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_uc_user ON user_changes(user_id);
 
+CREATE TABLE IF NOT EXISTS groups (
+    id INTEGER PRIMARY KEY,
+    snapshot_id INTEGER NOT NULL REFERENCES snapshots(id),
+    group_id TEXT NOT NULL,
+    group_name TEXT NOT NULL,
+    domain_name TEXT NOT NULL DEFAULT '',
+    UNIQUE (snapshot_id, group_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_groups_snapshot ON groups(snapshot_id);
+
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY
 );
@@ -223,6 +234,25 @@ def get_snapshot_list(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 def get_members_for_snapshot(conn: sqlite3.Connection, snapshot_id: int) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT group_name, user_name, site_role, domain_name FROM group_members WHERE snapshot_id = ? ORDER BY group_name, user_name",
+        (snapshot_id,),
+    ).fetchall()
+
+
+def insert_groups(conn: sqlite3.Connection, snapshot_id: int, groups: list[dict]):
+    conn.executemany(
+        """INSERT INTO groups
+           (snapshot_id, group_id, group_name, domain_name)
+           VALUES (:snapshot_id, :group_id, :group_name, :domain_name)""",
+        [{"snapshot_id": snapshot_id, **g} for g in groups],
+    )
+
+
+def get_groups_for_snapshot(conn: sqlite3.Connection, snapshot_id: int) -> list[sqlite3.Row]:
+    # Returns the full group inventory captured at snapshot time, including
+    # zero-member groups. Empty result is the legacy-snapshot signal — callers
+    # should fall back to DISTINCT group_id FROM group_members and warn.
+    return conn.execute(
+        "SELECT group_id, group_name, domain_name FROM groups WHERE snapshot_id = ? ORDER BY group_name",
         (snapshot_id,),
     ).fetchall()
 
