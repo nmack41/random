@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Red River Gorge — grade-based crag finder</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0 auto; padding: 1.5rem; max-width: 880px;
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  h1 { font-size: 1.4rem; margin: 0 0 .25rem; }
+  .sub { opacity: .7; margin: 0 0 1.25rem; }
+  fieldset { border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+             border-radius: 8px; padding: .75rem 1rem 1rem; margin: 0 0 1rem; }
+  legend { padding: 0 .4rem; font-weight: 600; }
+  .bands { display: flex; flex-wrap: wrap; gap: .4rem .9rem; }
+  .bands label { display: inline-flex; align-items: center; gap: .35rem; cursor: pointer; }
+  .controls { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin: 0 0 1rem; }
+  button.sort { font: inherit; padding: .3rem .7rem; border-radius: 6px; cursor: pointer;
+                color: inherit; background: transparent;
+                border: 1px solid color-mix(in srgb, currentColor 30%, transparent); }
+  button.sort[aria-pressed="true"] { font-weight: 600;
+                background: color-mix(in srgb, currentColor 12%, transparent); }
+  .headline { font-size: 1.05rem; margin: 0 0 1rem; min-height: 1.5rem; }
+  .headline strong { font-size: 1.15rem; }
+  ol.board { list-style: none; margin: 0; padding: 0; display: grid; gap: .4rem; }
+  li.row { padding: .5rem .6rem; border-radius: 6px;
+           background: color-mix(in srgb, currentColor 5%, transparent); }
+  .row .top { display: flex; align-items: baseline; gap: .5rem; }
+  .row .name { font-weight: 600; }
+  .row .preserve { opacity: .6; font-size: .85em; }
+  .row .nums { margin-left: auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .row .nums .fit { opacity: .6; }
+  .bar { height: 8px; border-radius: 4px; margin-top: .3rem;
+         background: color-mix(in srgb, currentColor 65%, transparent); }
+  .empty { opacity: .7; padding: 1.25rem 0; }
+  .count-line { opacity: .6; font-size: .85em; margin: .75rem 0 0; }
+</style>
+</head>
+<body>
+  <h1>Red River Gorge — grade-based crag finder</h1>
+  <p class="sub">Check the grades you climb; see which crags fit best.
+     Data: OpenBeta (CC0), sport routes only.</p>
+
+  <fieldset>
+    <legend>Grades</legend>
+    <div class="bands" id="bands"></div>
+  </fieldset>
+
+  <div class="controls">
+    <span>Sort by</span>
+    <button class="sort" id="sort-count" aria-pressed="true">Route count</button>
+    <button class="sort" id="sort-fit" aria-pressed="false">% fit</button>
+  </div>
+
+  <p class="headline" id="headline"></p>
+  <ol class="board" id="board"></ol>
+  <p class="count-line" id="count-line"></p>
+
+<script>
+const PAYLOAD = __PAYLOAD_JSON__;
+const TOP_N = 25;
+let sortKey = "count";                       // "count" | "fit"
+
+const $ = (id) => document.getElementById(id);
+const bandsEl = $("bands"), boardEl = $("board");
+const headlineEl = $("headline"), countLineEl = $("count-line");
+
+// Build one checkbox per present band (empty bands never render). All checked initially.
+for (const band of PAYLOAD.bands) {
+  const label = document.createElement("label");
+  const cb = document.createElement("input");
+  cb.type = "checkbox"; cb.value = band; cb.checked = true;
+  cb.addEventListener("change", render);
+  label.append(cb, document.createTextNode(band));
+  bandsEl.append(label);
+}
+
+$("sort-count").addEventListener("click", () => setSort("count"));
+$("sort-fit").addEventListener("click", () => setSort("fit"));
+function setSort(key) {
+  sortKey = key;
+  $("sort-count").setAttribute("aria-pressed", String(key === "count"));
+  $("sort-fit").setAttribute("aria-pressed", String(key === "fit"));
+  render();
+}
+
+const checkedBands = () =>
+  [...bandsEl.querySelectorAll("input:checked")].map((cb) => cb.value);
+
+function render() {
+  const bands = checkedBands();
+  boardEl.innerHTML = ""; headlineEl.textContent = ""; countLineEl.textContent = "";
+
+  if (bands.length === 0) {
+    showEmpty("Pick at least one grade to see matching crags.");
+    return;
+  }
+
+  // count = sum of counts over checked bands; fit = count / total (sport denominator).
+  const scored = PAYLOAD.crags.map((c, i) => {
+    let count = 0;
+    for (const b of bands) count += c.counts[b] || 0;
+    return { i, crag: c.crag, preserve: c.preserve, total: c.total, count, fit: count / c.total };
+  }).filter((s) => s.count > 0);
+
+  if (scored.length === 0) {
+    showEmpty("No crags have routes in the selected grades. Try widening your selection.");
+    return;
+  }
+
+  // Active metric desc; deterministic tiebreaker: total desc, then crag name asc.
+  scored.sort((a, b) =>
+    (b[sortKey] - a[sortKey]) || (b.total - a.total) || a.crag.localeCompare(b.crag));
+
+  const best = scored[0], max = best.count, top = scored.slice(0, TOP_N);
+  headlineEl.innerHTML =
+    `Top pick: <strong>${esc(best.crag)}</strong>` +
+    (best.preserve ? ` <span class="preserve">· ${esc(best.preserve)}</span>` : "") +
+    ` — ${best.count} route${best.count === 1 ? "" : "s"}, ${pct(best.fit)} fit`;
+
+  for (const s of top) {
+    const li = document.createElement("li");
+    li.className = "row";
+    li.dataset.i = s.i;                      // keyed by array index, not display name
+    li.innerHTML =
+      `<div class="top">
+         <span class="name">${esc(s.crag)}</span>` +
+      (s.preserve ? `<span class="preserve">${esc(s.preserve)}</span>` : "") +
+      `<span class="nums">${s.count} <span class="fit">· ${pct(s.fit)} fit</span></span>
+       </div>
+       <div class="bar" style="width:${(100 * s.count / max).toFixed(1)}%"></div>`;
+    boardEl.append(li);
+  }
+  countLineEl.textContent = `Showing ${top.length} of ${scored.length} matching crags.`;
+}
+
+function showEmpty(msg) { boardEl.innerHTML = `<li class="empty">${esc(msg)}</li>`; }
+const pct = (x) => (100 * x).toFixed(0) + "%";
+const esc = (s) => String(s).replace(/[&<>"']/g, (ch) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+
+render();                                    // initial paint: all bands checked
+</script>
+</body>
+</html>
