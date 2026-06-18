@@ -27,6 +27,21 @@ python3 -m venv .venv
 Open the notebook, run all cells, then tweak the **parameter cell** (`AREA`, `STATE`, `CRAG_OFFSET`,
 `GRADE`, `FOCUS_CRAG`) to ask your own questions.
 
+## Interactive crag finder
+
+Prefer clicking to coding? Build a **self-contained HTML page** that ranks RRG crags by the grades
+you want to climb:
+
+```bash
+.venv/bin/python build_recommender.py      # writes rrg_grade_recommender.html
+open rrg_grade_recommender.html            # or just double-click it in any browser
+```
+
+Check the grade bands you climb and the page instantly ranks crags by **route count** and **% fit**
+(the share of that crag's sport routes in your range) — no server, no internet, fully offline.
+Regenerate after a data refresh. The generated page is a build artifact (gitignored); the
+`recommender_template.html` it is built from is committed.
+
 ## What you get
 
 - **Crag × grade-band** and **wall × grade-band** matrices — raw route counts, columns ordered by
@@ -46,10 +61,14 @@ climbing_data/
 ├── exporter/
 │   ├── schema.sql            # custom export schema (full path_tokens array)
 │   └── config.yaml           # export.regions: ["USA"]
-├── climbing_density.py       # pure, tested transforms (grade parsing, hierarchy, matrices)
-├── test_climbing_density.py  # pytest unit tests
-├── grade_density.ipynb       # the exploratory notebook
-└── data/                     # gitignored; holds usa-sport-climbs.parquet
+├── climbing_density.py        # pure, tested transforms (grade parsing, hierarchy, matrices)
+├── test_climbing_density.py   # pytest unit tests
+├── build_recommender.py       # builds the crag-finder HTML from the parquet
+├── recommender_template.html  # crag-finder view + scoring JS (payload placeholder)
+├── test_build_recommender.py  # crag-finder build smoke test
+├── grade_density.ipynb        # the exploratory notebook
+├── rrg_grade_recommender.html # gitignored generated crag-finder page
+└── data/                      # gitignored; holds usa-sport-climbs.parquet
 ```
 
 ## How it works (the two ideas worth knowing)

@@ -1,6 +1,10 @@
 # Data exports — regenerate via DATA.md, not version-controlled (large, refreshable).
 data/
 
+# Generated crag-finder page — rebuild with `python build_recommender.py`.
+# Specific filename, NOT *.html (which would also ignore the committed template).
+rrg_grade_recommender.html
+
 # Project-local Python environment.
 .venv/
 
