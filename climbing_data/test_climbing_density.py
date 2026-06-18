@@ -225,3 +225,81 @@ def test_load_climbs_reads_parquet_and_coerces_path_tokens_to_lists(tmp_path):
     val = out.iloc[0]["path_tokens"]
     assert isinstance(val, list)
     assert val == ["USA", "Kentucky", RRG, "Crag", "Wall"]
+
+
+# --------------------------------------------------------------------------- #
+# recommender_payload
+# --------------------------------------------------------------------------- #
+
+def _recommender_frame(crag_offset=2):
+    """Prepared RRG frame for recommender_payload tests (mirrors _density_frame).
+
+    Built so a single frame exercises every spec §5 case at crag_offset=2:
+      - The Motherlode (PMRP): a deep, fallback-to-wall crag that still has a preserve;
+      - The Arsenal under BOTH Muir Valley and PMRP: identically-named, must stay distinct;
+      - Roadside Crag: directly under the area -> preserve None (never its own name).
+    """
+    rows = [
+        {"climb_id": "1", "grade_yds": "5.13a",
+         "path_tokens": ["USA", "Kentucky", RRG, "PMRP", "The Motherlode"]},
+        {"climb_id": "2", "grade_yds": "5.12c",
+         "path_tokens": ["USA", "Kentucky", RRG, "PMRP", "The Motherlode"]},
+        {"climb_id": "3", "grade_yds": "5.12a",
+         "path_tokens": ["USA", "Kentucky", RRG, "PMRP", "The Motherlode"]},
+        {"climb_id": "4", "grade_yds": "5.9",
+         "path_tokens": ["USA", "Kentucky", RRG, "Muir Valley", "The Arsenal"]},
+        {"climb_id": "5", "grade_yds": "5.11a",
+         "path_tokens": ["USA", "Kentucky", RRG, "PMRP", "The Arsenal"]},
+        {"climb_id": "6", "grade_yds": "5.8",
+         "path_tokens": ["USA", "Kentucky", RRG, "Roadside Crag"]},
+    ]
+    df = cd.add_grade_columns(_frame(rows))
+    return cd.derive_hierarchy(df, area=RRG, crag_offset=crag_offset)
+
+
+def _payload_crag(payload, name, preserve):
+    """The single crag entry matching (display name, preserve) — keys are distinct by both."""
+    hits = [c for c in payload["crags"] if c["crag"] == name and c["preserve"] == preserve]
+    assert len(hits) == 1, f"expected one {name!r} under {preserve!r}, got {len(hits)}"
+    return hits[0]
+
+
+def test_recommender_payload_bands_are_rank_ordered_present_only():
+    p = cd.recommender_payload(_recommender_frame(), area=RRG)
+    assert p["area"] == RRG
+    # rank order (5.9 before higher numbers), and 5.10 absent because no route is in it
+    assert p["bands"] == ["5.8", "5.9", "5.11", "5.12", "5.13"]
+
+
+def test_recommender_payload_counts_total_and_zero_omission():
+    p = cd.recommender_payload(_recommender_frame(), area=RRG)
+    ml = _payload_crag(p, "The Motherlode", "PMRP")
+    assert ml["counts"] == {"5.12": 2, "5.13": 1}     # 5.12a + 5.12c roll up to 5.12
+    assert "5.8" not in ml["counts"]                  # zero band omitted, not stored as 0
+    assert ml["total"] == 3                           # == sum(counts) == the crag's route count
+
+
+def test_recommender_payload_preserve_read_for_deep_crag():
+    p = cd.recommender_payload(_recommender_frame(), area=RRG)
+    arsenal_muir = _payload_crag(p, "The Arsenal", "Muir Valley")
+    assert arsenal_muir["counts"] == {"5.9": 1}       # preserve = the AREA+1 token
+
+
+def test_recommender_payload_preserve_none_never_own_name_directly_under_area():
+    p = cd.recommender_payload(_recommender_frame(), area=RRG)
+    road = [c for c in p["crags"] if c["crag"] == "Roadside Crag"]
+    assert len(road) == 1
+    assert road[0]["preserve"] is None                # NOT "Roadside Crag" — the strict-between guard
+
+
+def test_recommender_payload_deep_fallback_crag_keeps_preserve_not_none_or_own_name():
+    # The Motherlode falls back to the wall at crag_offset=2, yet PMRP sits strictly between
+    # area and leaf -> preserve must be "PMRP", never None and never "The Motherlode".
+    p = cd.recommender_payload(_recommender_frame(), area=RRG)
+    assert _payload_crag(p, "The Motherlode", "PMRP")["preserve"] == "PMRP"
+
+
+def test_recommender_payload_identically_named_crags_stay_distinct_by_key():
+    p = cd.recommender_payload(_recommender_frame(), area=RRG)
+    arsenals = sorted(c["preserve"] for c in p["crags"] if c["crag"] == "The Arsenal")
+    assert arsenals == ["Muir Valley", "PMRP"]        # two distinct entries grouped by crag_key

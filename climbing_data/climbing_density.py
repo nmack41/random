@@ -160,6 +160,40 @@ def density_matrix(df, unit="crag", grade_level="band"):
     return counts
 
 
+def recommender_payload(df, area="Red River Gorge"):
+    """Build the JSON-serializable payload for the client-side crag recommender (design §4.1).
+
+    Takes a PREPARED frame (post add_grade_columns + derive_hierarchy): it must already have
+    grade_band, grade_rank, crag, crag_key — the same contract as density_matrix. Returns:
+
+        {"area": str,
+         "bands": [band, ...],                      # present bands, ordered by grade_rank
+         "crags": [{"crag": str, "preserve": str|None, "total": int, "counts": {band: int}}]}
+
+    One entry per crag_key, so identically-named crags in different preserves stay distinct;
+    `crag` is the display name. `total` is the crag's parsed-route count (the % fit denominator)
+    and equals sum(counts). `preserve` is the AREA+1 orienting token, read from crag_key only
+    when a token sits strictly between the area and the crag (guard i + 1 < len(key) - 1);
+    otherwise None, so a crag directly under the area is never mislabeled with its own name.
+    """
+    d = df[df["grade_band"].notna()]
+    bands = d.groupby("grade_band")["grade_rank"].min().sort_values().index.tolist()
+    crags = []
+    for crag_key, g in d.groupby("crag_key"):
+        raw = g["grade_band"].value_counts().to_dict()
+        counts = {b: int(raw[b]) for b in bands if b in raw}      # band-ordered; zero bands omitted
+        key = list(crag_key)
+        i = key.index(area)
+        preserve = key[i + 1] if i + 1 < len(key) - 1 else None   # strict-between guard (§4.1)
+        crags.append({
+            "crag": g["crag"].iloc[0],
+            "preserve": preserve,
+            "total": int(sum(counts.values())),
+            "counts": counts,
+        })
+    return {"area": area, "bands": bands, "crags": crags}
+
+
 def top_units_for_grade(df, grade, unit="crag", n=5):
     """Top-N units (crag/wall/...) by raw count of routes at a given grade (band or letter)."""
     name_col = unit
