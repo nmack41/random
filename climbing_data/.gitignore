@@ -1,0 +1,14 @@
+# Data exports — regenerate via DATA.md, not version-controlled (large, refreshable).
+data/
+
+# Project-local Python environment.
+.venv/
+
+# Scratch clone of the upstream parquet-exporter used by the one-time export.
+.export-build/
+
+# Python / tooling caches.
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/

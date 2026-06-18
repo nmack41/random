@@ -1,0 +1,21 @@
+# Climbing grade-density export config (custom).
+#
+# Copied over the upstream parquet-exporter's config.yaml before running `python export.py`.
+# See ../DATA.md for the full one-time procedure.
+#
+# IMPORTANT: `export.regions` filters by COUNTRY only. The upstream export.py first crawls
+# *every* country from the API, then keeps rows whose pathTokens[0] is in this list. So
+# ["USA"] shrinks the output parquet but NOT the network work — the run is still a full
+# global crawl (paginated at 500/page). Sub-country names (e.g. "Kentucky") do NOT work
+# here; the Red River Gorge focus is applied later, in the notebook.
+
+export:
+  api_url: "https://api.openbeta.io/graphql"
+
+  # Country-level filter (NOT a top-level `regions:` key — it must be nested under `export`).
+  regions:
+    - USA
+
+  output:
+    filename: "usa-sport-climbs.parquet"
+    compression: "snappy"  # Options: snappy, gzip, zstd
